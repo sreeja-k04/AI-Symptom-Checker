@@ -1,0 +1,8 @@
+streamlit
+pandas
+numpy
+scikit-learn
+spacy
+fuzzywuzzy
+python-Levenshtein  # Required for fuzzywuzzy
+openai
