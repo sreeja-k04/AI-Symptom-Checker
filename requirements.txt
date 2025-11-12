@@ -1,5 +1,15 @@
+# requirements.txt (quick pin)
+openai==0.28.1
+# (other deps remain the same)
 streamlit==1.37.0
 pandas==2.2.1
 numpy==1.26.0
 scikit-learn==1.4.0
 spacy==3.7.2
+fuzzywuzzy==0.18.0
+python-Levenshtein==0.25.0
+fpdf==1.7.2
+requests>=2.31.0
+tqdm>=4.66.0
+
+en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1.tar.gz
