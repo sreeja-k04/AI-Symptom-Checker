@@ -12,6 +12,9 @@ from fuzzywuzzy import process
 from fpdf import FPDF
 import re
 
+# Set OpenAI API key
+openai.api_key = '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'
+
 # Load dataset
 file_path = 'symbipredict_2022.csv'
 df = pd.read_csv(file_path)
@@ -21,19 +24,25 @@ df.columns = df.columns.str.lower().str.replace('_', ' ')
 df.iloc[:, :-1] = df.iloc[:, :-1].applymap(lambda x: str(x).strip().lower() if isinstance(x, str) else x)
 
 # Select symptoms (all columns except the last) and disease (last column)
-X = df.iloc[:, :-1]
-y = df.iloc[:, -1]
+X = df.iloc[:, :-1]  # Symptoms columns
+y = df.iloc[:, -1]   # Disease column
 
 # Get all symptoms as a list
 all_symptoms = X.columns.tolist()
 
-# Symptom synonyms mapping
-symptom_synonyms = {
-    "runny nose": "nasal discharge",
-    "stomach pain": "abdominal pain",
-    "high temperature": "fever",
-    "sore throat": "throat pain"
-}
+# Function to get synonyms from OpenAI
+def get_synonyms_from_openai(symptom):
+    try:
+        response = openai.Completion.create(
+            engine="text-davinci-003",  # Use the appropriate model
+            prompt=f"Provide synonyms for the symptom '{symptom}' that a doctor might recognize.",
+            max_tokens=50
+        )
+        synonyms = response.choices[0].text.strip()
+        return synonyms.split(", ")
+    except Exception as e:
+        st.error(f"Error fetching synonyms: {str(e)}")
+        return []
 
 # Encode symptoms
 mlb = MultiLabelBinarizer()
@@ -44,7 +53,7 @@ disease_encoder = LabelEncoder()
 y_encoded = disease_encoder.fit_transform(y)
 disease_mapping = {idx: disease for idx, disease in enumerate(disease_encoder.classes_)}
 
-# Train/test split
+# Split data
 X_train, X_test, y_train, y_test = train_test_split(X_encoded, y_encoded, test_size=0.2, random_state=42, stratify=y_encoded)
 
 # Train model
@@ -59,10 +68,10 @@ with open('disease_encoder.pkl', 'wb') as f:
 with open('mlb.pkl', 'wb') as f:
     pickle.dump(mlb, f)
 
-# Load NLP model
+# Load spaCy NLP model
 nlp = spacy.load('en_core_web_sm')
 
-# UI Styling
+# Streamlit UI with custom styling
 st.markdown(
     """
     <style>
@@ -87,17 +96,17 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# App Title
 st.title("AI Symptom Checker")
 st.write("Describe your symptoms, and our AI will predict possible diseases.")
 
-# Inputs
+# User Input
 residence = st.text_input("🏠 Where do you live? (City/Region)")
+
 duration = st.text_input("🕐 How long have you had these symptoms? (e.g., 2 days, 1 week)")
-severity = st.selectbox("⚠️ Symptom severity:", ["Mild", "Moderate", "Severe"])
+severity = st.selectbox("⚠ Symptom severity:", ["Mild", "Moderate", "Severe"])
 user_input = st.text_area("Enter your symptoms in natural language:")
 
-# Symptom Extraction
+# Extract symptoms from user input
 def extract_symptoms(text):
     doc = nlp(text.lower())
     extracted = set()
@@ -105,15 +114,17 @@ def extract_symptoms(text):
         match = process.extractOne(token.text, all_symptoms, score_cutoff=50)
         if match:
             extracted.add(match[0])
-        elif token.text in symptom_synonyms:
-            extracted.add(symptom_synonyms[token.text])
+        else:
+            synonyms = get_synonyms_from_openai(token.text)
+            if synonyms:
+                extracted.update(synonyms)
     return list(extracted)
 
-# Remove non-ASCII
+# Remove non-ASCII characters (emojis etc.) for PDF
 def remove_non_ascii(text):
     return re.sub(r'[^\x00-\x7F]+', '', text)
 
-# PDF Report Generator
+# Generate PDF Report
 def generate_pdf_report(symptoms, diseases, confidences, specialists, severity, duration, residence):
     pdf = FPDF()
     pdf.add_page()
@@ -121,11 +132,10 @@ def generate_pdf_report(symptoms, diseases, confidences, specialists, severity, 
 
     def add_line(label, content):
         pdf.set_font("Arial", 'B', size=12)
-        pdf.cell(40, 10, remove_non_ascii(f"{label}:"), ln=False)
+        pdf.cell(40, 10, remove_non_ascii(f"{label}:") , ln=False)
         pdf.set_font("Arial", size=12)
         pdf.multi_cell(0, 10, remove_non_ascii(str(content)))
 
-    # Report Sections
     add_line("User Symptoms", ', '.join(symptoms))
     add_line("Symptom Severity", severity)
     add_line("Symptom Duration", duration)
@@ -134,63 +144,29 @@ def generate_pdf_report(symptoms, diseases, confidences, specialists, severity, 
 
     if specialists:
         for idx, spec in enumerate(specialists, 1):
-            add_line(f"Specialist {idx}", f"{spec['name']} ({spec['specialty']})")
-            add_line("  Location", spec['location'])
-            add_line("  Hospital Address", spec['hospital_address'])
-            add_line("  Contact Number", spec['contact_number'])
+            add_line(f"Specialist {idx}", f"{spec['name']} ({spec['specialty']}) - {spec['location']}")
 
     file_path = "diagnosis_report.pdf"
     pdf.output(file_path)
     return file_path
 
-# Mock Specialist Data with Details
+# Mock Specialist Info (example; could be replaced with real API)
 def get_specialists(diseases, residence):
     if residence.lower() == "new york":
         return [
-            {
-                "name": "Dr. Smith",
-                "specialty": "General Physician",
-                "location": "New York",
-                "hospital_address": "123 Health St, NY 10001",
-                "contact_number": "+1 212-555-1234"
-            },
-            {
-                "name": "Dr. Lee",
-                "specialty": "Infectious Diseases",
-                "location": "New York",
-                "hospital_address": "456 Wellness Ave, NY 10002",
-                "contact_number": "+1 212-555-5678"
-            }
+            {"name": "Dr. Smith", "specialty": "General Physician", "location": "New York"},
+            {"name": "Dr. Lee", "specialty": "Infectious Diseases", "location": "New York"}
         ]
     elif residence.lower() == "san francisco":
         return [
-            {
-                "name": "Dr. Harris",
-                "specialty": "Cardiologist",
-                "location": "San Francisco",
-                "hospital_address": "789 Heart Blvd, SF 94102",
-                "contact_number": "+1 415-555-9876"
-            },
-            {
-                "name": "Dr. James",
-                "specialty": "Dermatologist",
-                "location": "San Francisco",
-                "hospital_address": "321 Skin Ln, SF 94103",
-                "contact_number": "+1 415-555-4321"
-            }
+            {"name": "Dr. Harris", "specialty": "Cardiologist", "location": "San Francisco"},
+            {"name": "Dr. James", "specialty": "Dermatologist", "location": "San Francisco"}
         ]
     else:
         return [
-            {
-                "name": "Dr. Brown",
-                "specialty": "General Physician",
-                "location": "Online Consultation",
-                "hospital_address": "Virtual Clinic",
-                "contact_number": "+1 800-555-0000"
-            }
+            {"name": "Dr. Brown", "specialty": "General Physician", "location": "Online Consultation"}
         ]
 
-# Predict Button
 if st.button("🔍 Predict Disease"):
     if not user_input.strip():
         st.warning("⚠ Please enter your symptoms.")
@@ -216,8 +192,8 @@ if st.button("🔍 Predict Disease"):
                 for i, disease in enumerate(predicted_diseases, start=1):
                     st.write(f"{i}. {disease} - ({confidences[i-1]:.2f}% confidence)")
 
-                specialists = get_specialists(predicted_diseases, residence)
-                report_path = generate_pdf_report(extracted_symptoms, predicted_diseases, confidences, specialists, severity, duration, residence)
+                specialist_info = get_specialists(predicted_diseases, residence)
+                report_path = generate_pdf_report(extracted_symptoms, predicted_diseases, confidences, specialist_info, severity, duration, residence)
                 st.success("📄 Report generated successfully!")
                 with open(report_path, "rb") as f:
-                    st.download_button(label="⬇️ Download Report (PDF)", data=f, file_name="diagnosis_report.pdf", mime="application/pdf")
+                    st.download_button(label="⬇ Download Report (PDF)", data=f, file_name="diagnosis_report.pdf", mime="application/pdf")
